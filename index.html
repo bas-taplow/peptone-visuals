@@ -854,6 +854,7 @@
       else { transparentBg = false; bgBrightnessSlider.value(mode === 'white' ? 255 : 0); refreshAllLabels(); }
       document.getElementById('canvas-container').classList.toggle('trans', transparentBg);
       updateBgButtons();
+      if (pxMode) pxApplyBg();
       scheduleRender();
     }
     function updateBgButtons() {
@@ -1078,7 +1079,7 @@
       bgBtnBlack = createButton('Black').class('btn').parent(bgRow); bgBtnBlack.mousePressed(() => setBg('black'));
       bgBtnWhite = createButton('White').class('btn').parent(bgRow); bgBtnWhite.mousePressed(() => setBg('white'));
       bgBtnTrans = createButton('Transparent').class('btn').parent(bgRow); bgBtnTrans.mousePressed(() => setBg('transparent'));
-      bgBrightnessSlider = addSlider(st, 'Background brightness', 0, 255, 6, 1, 0, '', true, () => { transparentBg = false; document.getElementById('canvas-container').classList.remove('trans'); updateBgButtons(); });
+      bgBrightnessSlider = addSlider(st, 'Background brightness', 0, 255, 6, 1, 0, '', true, () => { transparentBg = false; document.getElementById('canvas-container').classList.remove('trans'); updateBgButtons(); if (pxMode) pxApplyBg(); });
       let colRow1 = createDiv('').class('control-row').parent(st);
       createSpan('Color 1 · subject').class('slabel').parent(colRow1);
       colorPicker1 = createColorPicker('#7c5cff').parent(colRow1); colorPicker1.input(scheduleRender);
@@ -1154,6 +1155,7 @@
         '.top-switch button{background:transparent;border:none;color:var(--muted);font:inherit;font-size:.7rem;font-weight:700;letter-spacing:.09em;text-transform:uppercase;padding:6px 15px;border-radius:16px;cursor:pointer;transition:background .15s,color .15s}' +
         '.top-switch button.active{background:var(--accent);color:#fff}' +
         '#parallaxStage{position:absolute;inset:22px;display:none;overflow:hidden;border-radius:6px}' +
+        '#parallaxStage.trans{background-image:linear-gradient(45deg,#26262b 25%,transparent 25%),linear-gradient(-45deg,#26262b 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#26262b 75%),linear-gradient(-45deg,transparent 75%,#26262b 75%);background-size:22px 22px;background-position:0 0,0 11px,11px -11px,-11px 0}' +
         '#stage.parallax #parallaxStage{display:block}' +
         '#stage.parallax #canvas-container{visibility:hidden}' +
         '.pxlayer{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;will-change:transform;pointer-events:none}';
@@ -1220,8 +1222,15 @@
       return g;
     }
 
+    function pxApplyBg() {
+      const ov = document.getElementById('parallaxStage');
+      if (!ov) return;
+      if (transparentBg) { ov.classList.add('trans'); ov.style.background = 'transparent'; }
+      else { ov.classList.remove('trans'); let v = bgBrightnessSlider.value() | 0; ov.style.background = 'rgb(' + v + ',' + v + ',' + v + ')'; }
+    }
     function buildParallaxLayers() {
       const ov = document.getElementById('parallaxStage');
+      pxApplyBg();
       ov.innerHTML = ''; pxLayerImgs = [];
       for (let i = 0; i < 3; i++) {
         let g = pxRenderLayer(i);
@@ -1250,7 +1259,7 @@
     // ---- self-contained parallax document (shared by HTML export + zip snippet) ----
     function parallaxDoc(srcs, title) {
       return '<!doctype html><html><head><meta charset="utf-8"><title>' + title + '</title>' +
-      '<style>html,body{margin:0;height:100%;background:#fff}.lc{position:relative;width:100%;max-width:1100px;margin:auto;aspect-ratio:' + width + '/' + height + ';overflow:hidden}.lc img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;will-change:transform}</style>' +
+      '<style>html,body{margin:0;height:100%;background:' + (transparentBg ? 'transparent' : ('rgb(' + (bgBrightnessSlider.value()|0) + ',' + (bgBrightnessSlider.value()|0) + ',' + (bgBrightnessSlider.value()|0) + ')')) + '}.lc{position:relative;width:100%;max-width:1100px;margin:auto;aspect-ratio:' + width + '/' + height + ';overflow:hidden}.lc img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;will-change:transform}</style>' +
       '</head><body><div class="lc" id="lc">' +
       '<img data-depth="far" src="' + srcs.far + '" alt="">' +
       '<img data-depth="middle" src="' + srcs.middle + '" alt="">' +

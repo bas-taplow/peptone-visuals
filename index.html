@@ -549,7 +549,9 @@
       let grainAnim = grainSlider.value() > 0 && sp > 0;
       return animatedMode || wobbleAnim || grainAnim;
     }
-    function scheduleRender() { if (pxMode) { noLoop(); return; } if (isAnimating()) loop(); else { noLoop(); redraw(); } }
+    let pxRebuildTimer = null;
+    function pxRebuild() { clearTimeout(pxRebuildTimer); pxRebuildTimer = setTimeout(() => { if (pxMode) buildParallaxLayers(); }, 140); }
+    function scheduleRender() { if (pxMode) { noLoop(); pxRebuild(); return; } if (isAnimating()) loop(); else { noLoop(); redraw(); } }
     function mouseMoved() { if (img && !isPaused && mousePushSlider.value() > 0 && !isLooping()) redraw(); }
 
     function togglePlay() { isPaused = !isPaused; playButton.html(isPaused ? 'Play' : 'Pause'); scheduleRender(); }
@@ -1317,16 +1319,16 @@
       styleSel.option('Flow (smoke)', 'flow');
       styleSel.selected('lines');
       styleSel.changed(() => { renderStyle = styleSel.value(); if (pxMode) buildParallaxLayers(); else scheduleRender(); });
-      dotSizeSlider = addSlider(body, 'Size (dot / stroke)', 1, 8, 2.6, 0.1, 1, '', true, () => { if (pxMode) buildParallaxLayers(); });
-      dotSoftSlider = addSlider(body, 'Opacity', 20, 255, 150, 5, 0, '', true, () => { if (pxMode) buildParallaxLayers(); });
-      flowLenSlider = addSlider(body, 'Flow length (smoke)', 8, 200, 70, 1, 0, '', true, () => { if (pxMode) buildParallaxLayers(); });
-      bgCutSlider = addSlider(body, 'Background cutout', 0, 100, 0, 1, 0, '%', true, () => { if (pxMode) buildParallaxLayers(); });
+      dotSizeSlider = addSlider(body, 'Size (dot / stroke)', 1, 8, 2.6, 0.1, 1, '', true, () => { if (pxMode) pxRebuild(); });
+      dotSoftSlider = addSlider(body, 'Opacity', 20, 255, 150, 5, 0, '', true, () => { if (pxMode) pxRebuild(); });
+      flowLenSlider = addSlider(body, 'Flow length (smoke)', 8, 200, 70, 1, 0, '', true, () => { if (pxMode) pxRebuild(); });
+      bgCutSlider = addSlider(body, 'Background cutout', 0, 100, 0, 1, 0, '%', true, () => { if (pxMode) pxRebuild(); });
       const splitSel = createSelect().parent(body); splitSelRef = splitSel;
       splitSel.option('Depth (by brightness)', 'depth');
       splitSel.option('Interleaved scan-lines', 'interleave');
       splitSel.selected('depth');
       splitSel.changed(() => { pxSplit = splitSel.value(); if (pxMode) buildParallaxLayers(); });
-      depthSlider = addSlider(body, 'Parallax depth (soft far / sharp near)', 0, 100, 50, 1, 0, '', true, () => { if (pxMode) buildParallaxLayers(); });
+      depthSlider = addSlider(body, 'Parallax depth (soft far / sharp near)', 0, 100, 50, 1, 0, '', true, () => { if (pxMode) pxRebuild(); });
       createButton('Rebuild preview').class('btn').parent(body).mousePressed(() => { if (pxMode) buildParallaxLayers(); else toast('Switch to Parallax first'); });
       const eRow = createDiv('').class('btn-row').parent(body);
       createButton('Layers (.zip)').class('btn').parent(eRow).mousePressed(exportParallaxZip);

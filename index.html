@@ -895,7 +895,10 @@
         trans: transparentBg,
         flow: flowToggle.checked(), flowS: flowStrengthSlider.value(),
         bloom: bloomSlider.value(), bloomR: bloomRadiusSlider.value(), grain: grainSlider.value(),
-        preB: preBrightSlider.value(), gamma: preGammaSlider.value(), blur: preBlurSlider.value()
+        preB: preBrightSlider.value(), gamma: preGammaSlider.value(), blur: preBlurSlider.value(),
+        renderStyle: renderStyle, dotSize: dotSizeSlider ? dotSizeSlider.value() : 2.6, dotSoft: dotSoftSlider ? dotSoftSlider.value() : 150,
+        flowLen: flowLenSlider ? flowLenSlider.value() : 70, depth: depthSlider ? depthSlider.value() : 50,
+        autoLev: autoLevelsToggle ? autoLevelsToggle.checked() : false, split: pxSplit
       };
     }
     function applyState(s) {
@@ -914,6 +917,10 @@
       setC(flowToggle, s.flow); setV(flowStrengthSlider, s.flowS);
       setV(bloomSlider, s.bloom); setV(bloomRadiusSlider, s.bloomR); setV(grainSlider, s.grain);
       setV(preBrightSlider, s.preB); setV(preGammaSlider, s.gamma); setV(preBlurSlider, s.blur);
+      if (s.renderStyle !== undefined) { renderStyle = s.renderStyle; if (styleSelRef) styleSelRef.selected(s.renderStyle); }
+      setV(dotSizeSlider, s.dotSize); setV(dotSoftSlider, s.dotSoft); setV(flowLenSlider, s.flowLen); setV(depthSlider, s.depth);
+      setC(autoLevelsToggle, s.autoLev);
+      if (s.split !== undefined) { pxSplit = s.split; if (splitSelRef) splitSelRef.selected(s.split); }
       if (s.trans !== undefined) transparentBg = !!s.trans;
       else if (s.bg !== undefined) transparentBg = false;
       document.getElementById('canvas-container').classList.toggle('trans', transparentBg);
@@ -1160,6 +1167,7 @@
     let pxLayerImgs = [];
     let renderStyle = 'lines';
     let dotSizeSlider, dotSoftSlider, depthSlider, flowLenSlider;
+    let styleSelRef, splitSelRef;
     const MAIN = { noStroke: () => noStroke(), fill: (...a) => fill(...a), circle: (...a) => circle(...a), stroke: (...a) => stroke(...a), strokeWeight: (...a) => strokeWeight(...a), line: (...a) => line(...a) };
     function pxDraw(g, x1, y1, x2, y2, w, r, gg, b) {
       if (renderStyle === 'dots') {
@@ -1299,7 +1307,7 @@
       sec.attribute('data-key', 'parallax');
       createDiv('Parallax &amp; Export <span class="chev">▾</span>').class('section-title').parent(sec);
       const body = createDiv('').class('section-body').parent(sec);
-      const styleSel = createSelect().parent(body);
+      const styleSel = createSelect().parent(body); styleSelRef = styleSel;
       styleSel.option('Lines', 'lines');
       styleSel.option('Dots (stipple)', 'dots');
       styleSel.option('Flow (smoke)', 'flow');
@@ -1308,7 +1316,7 @@
       dotSizeSlider = addSlider(body, 'Size (dot / stroke)', 1, 8, 2.6, 0.1, 1, '', true, () => { if (pxMode) buildParallaxLayers(); });
       dotSoftSlider = addSlider(body, 'Opacity', 20, 255, 150, 5, 0, '', true, () => { if (pxMode) buildParallaxLayers(); });
       flowLenSlider = addSlider(body, 'Flow length (smoke)', 8, 200, 70, 1, 0, '', true, () => { if (pxMode) buildParallaxLayers(); });
-      const splitSel = createSelect().parent(body);
+      const splitSel = createSelect().parent(body); splitSelRef = splitSel;
       splitSel.option('Depth (by brightness)', 'depth');
       splitSel.option('Interleaved scan-lines', 'interleave');
       splitSel.selected('depth');
@@ -1318,9 +1326,24 @@
       const eRow = createDiv('').class('btn-row').parent(body);
       createButton('Layers (.zip)').class('btn').parent(eRow).mousePressed(exportParallaxZip);
       createButton('Parallax HTML').class('btn').parent(eRow).mousePressed(exportParallaxHTML);
+      createButton('★ Conformation stipple preset').class('btn accent').parent(body).mousePressed(applyStipplePreset);
       sec.elt.querySelector('.section-title').addEventListener('click', () => sec.elt.classList.toggle('collapsed'));
     }
 
+    function applyStipplePreset() {
+      applyState({
+        pat: 'straight', ang: 0, warp: 0, wob: 2, wAmp: 0, wFrq: 0.07, spd: 0,
+        den: 7, maxT: 3.5, minT: 0.6, smStr: 0.45, res: 3, con: 2.3, bg: 255,
+        c1: '#6a2cf0', c2: '#cdbcff',
+        anlgT: true, htchT: false, smthT: true, alphT: false, duoT: true, sampT: false, invT: true,
+        flow: false, flowS: 0, bloom: 0, bloomR: 0, grain: 0,
+        preB: 1.0, gamma: 1.0, blur: 0, trans: false,
+        renderStyle: 'dots', dotSize: 1.9, dotSoft: 115, flowLen: 70, depth: 55, autoLev: true, split: 'depth'
+      });
+      clearActiveState();
+      if (pxMode) buildParallaxLayers();
+      toast('Conformation stipple applied');
+    }
     function setParallax(on) {
       if (on === pxMode) return;
       const stage = document.getElementById('stage');

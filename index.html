@@ -1199,7 +1199,8 @@
         '#parallaxStage.trans{background-image:linear-gradient(45deg,#26262b 25%,transparent 25%),linear-gradient(-45deg,#26262b 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#26262b 75%),linear-gradient(-45deg,transparent 75%,#26262b 75%);background-size:22px 22px;background-position:0 0,0 11px,11px -11px,-11px 0}' +
         '#stage.parallax #parallaxStage{display:block}' +
         '#stage.parallax #canvas-container{visibility:hidden}' +
-        '.pxlayer{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;will-change:transform;pointer-events:none}';
+        '.pxlayer{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;will-change:transform;pointer-events:none}' +
+        '#controls.parallax-mode .section[data-key="finish"],#controls.parallax-mode .section[data-key="export"]{display:none}';
       const stEl = document.createElement('style'); stEl.textContent = css; document.head.appendChild(stEl);
 
       const stage = document.getElementById('stage');
@@ -1248,6 +1249,7 @@
         if (!img) { toast('Load an image first'); return; }
         pxMode = true;
         stage.classList.add('parallax');
+        document.getElementById('controls').classList.add('parallax-mode');
         noLoop();
         buildParallaxLayers();
         if (!pxRAF) pxRAF = requestAnimationFrame(pxTick);
@@ -1255,6 +1257,7 @@
       } else {
         pxMode = false;
         stage.classList.remove('parallax');
+        document.getElementById('controls').classList.remove('parallax-mode');
         if (pxRAF) { cancelAnimationFrame(pxRAF); pxRAF = null; }
         document.getElementById('parallaxStage').innerHTML = '';
         pxLayerImgs = [];

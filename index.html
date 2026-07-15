@@ -1200,7 +1200,7 @@
         '#stage.parallax #parallaxStage{display:block}' +
         '#stage.parallax #canvas-container{visibility:hidden}' +
         '.pxlayer{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;will-change:transform;pointer-events:none}' +
-        '#controls.parallax-mode .section:not([data-key="parallax"]){display:none}';
+        '#controls.parallax-mode .section:not([data-key="parallax"]):not([data-key="source"]):not([data-key="style"]){display:none}';
       const stEl = document.createElement('style'); stEl.textContent = css; document.head.appendChild(stEl);
 
       const stage = document.getElementById('stage');

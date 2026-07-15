@@ -597,6 +597,7 @@
       let col1 = hexToRgb(colorPicker1.value());
       let col2 = hexToRgb(colorPicker2.value());
       let contrastVal = contrastSlider.value();
+      let cutout = bgCutSlider ? bgCutSlider.value() / 100 : 0;
       let useFlow = flowToggle.checked() && flowField;
       let flowStrength = flowStrengthSlider.value();
 
@@ -681,7 +682,9 @@
             let wx2 = cx + (x + res) * cosA - fy2 * sinA;
             let wy2 = cy + (x + res) * sinA + fy2 * cosA;
             let lay = splitMode === 'interleave' ? (rowIndex % 3) : (b < 85 ? 0 : (b < 170 ? 1 : 2));
-            if (layerFilter === null || lay === layerFilter) emit(wx1, wy1, wx2, wy2, currentW, cr, cg, cb, lay);
+            let pass = (layerFilter === null || lay === layerFilter);
+            if (pass && cutout > 0) { let cv = invert ? (b / 255) : (1 - b / 255); if (cv < cutout) pass = false; }
+            if (pass) emit(wx1, wy1, wx2, wy2, currentW, cr, cg, cb, lay);
           } else {
             currentW = -1;
           }
@@ -898,7 +901,7 @@
         preB: preBrightSlider.value(), gamma: preGammaSlider.value(), blur: preBlurSlider.value(),
         renderStyle: renderStyle, dotSize: dotSizeSlider ? dotSizeSlider.value() : 2.6, dotSoft: dotSoftSlider ? dotSoftSlider.value() : 150,
         flowLen: flowLenSlider ? flowLenSlider.value() : 70, depth: depthSlider ? depthSlider.value() : 50,
-        autoLev: autoLevelsToggle ? autoLevelsToggle.checked() : false, split: pxSplit
+        autoLev: autoLevelsToggle ? autoLevelsToggle.checked() : false, split: pxSplit, bgCut: bgCutSlider ? bgCutSlider.value() : 0
       };
     }
     function applyState(s) {
@@ -919,7 +922,7 @@
       setV(preBrightSlider, s.preB); setV(preGammaSlider, s.gamma); setV(preBlurSlider, s.blur);
       if (s.renderStyle !== undefined) { renderStyle = s.renderStyle; if (styleSelRef) styleSelRef.selected(s.renderStyle); }
       setV(dotSizeSlider, s.dotSize); setV(dotSoftSlider, s.dotSoft); setV(flowLenSlider, s.flowLen); setV(depthSlider, s.depth);
-      setC(autoLevelsToggle, s.autoLev);
+      setC(autoLevelsToggle, s.autoLev); setV(bgCutSlider, s.bgCut);
       if (s.split !== undefined) { pxSplit = s.split; if (splitSelRef) splitSelRef.selected(s.split); }
       if (s.trans !== undefined) transparentBg = !!s.trans;
       else if (s.bg !== undefined) transparentBg = false;
@@ -1166,7 +1169,7 @@
     let pxPointer = { tx: 0, ty: 0, x: 0, y: 0 };
     let pxLayerImgs = [];
     let renderStyle = 'lines';
-    let dotSizeSlider, dotSoftSlider, depthSlider, flowLenSlider;
+    let dotSizeSlider, dotSoftSlider, depthSlider, flowLenSlider, bgCutSlider;
     let styleSelRef, splitSelRef;
     const MAIN = { noStroke: () => noStroke(), fill: (...a) => fill(...a), circle: (...a) => circle(...a), stroke: (...a) => stroke(...a), strokeWeight: (...a) => strokeWeight(...a), line: (...a) => line(...a) };
     function pxDraw(g, x1, y1, x2, y2, w, r, gg, b) {
@@ -1207,6 +1210,7 @@
       let splitMode = (opts && opts.split) ? opts.split : 'depth';
       let layerFilter = (opts && opts.layer != null) ? opts.layer : null;
       let p = img.pixels, iw = img.width, nc = 0.006;
+      let cutout = bgCutSlider ? bgCutSlider.value() / 100 : 0;
       let cap = 200000, count = 0;
       const lum = (i) => p[i] * 0.299 + p[i + 1] * 0.587 + p[i + 2] * 0.114;
       let rowIdx = -1;
@@ -1223,7 +1227,7 @@
           let b0 = lum(idx);
           let nb0 = constrain((b0 / 255 - 0.5) * contrastVal + 0.5, 0, 1);
           let content = invert ? nb0 : (1 - nb0);
-          if (content < 0.12) continue;
+          if (content < Math.max(0.12, cutout)) continue;
           let lay = splitMode === 'interleave' ? (rowIdx % 3) : (b0 < 85 ? 0 : (b0 < 170 ? 1 : 2));
           if (layerFilter !== null && lay !== layerFilter) continue;
           let ctx = ctxForLayer(lay);
@@ -1316,6 +1320,7 @@
       dotSizeSlider = addSlider(body, 'Size (dot / stroke)', 1, 8, 2.6, 0.1, 1, '', true, () => { if (pxMode) buildParallaxLayers(); });
       dotSoftSlider = addSlider(body, 'Opacity', 20, 255, 150, 5, 0, '', true, () => { if (pxMode) buildParallaxLayers(); });
       flowLenSlider = addSlider(body, 'Flow length (smoke)', 8, 200, 70, 1, 0, '', true, () => { if (pxMode) buildParallaxLayers(); });
+      bgCutSlider = addSlider(body, 'Background cutout', 0, 100, 0, 1, 0, '%', true, () => { if (pxMode) buildParallaxLayers(); });
       const splitSel = createSelect().parent(body); splitSelRef = splitSel;
       splitSel.option('Depth (by brightness)', 'depth');
       splitSel.option('Interleaved scan-lines', 'interleave');

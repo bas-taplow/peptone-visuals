@@ -542,6 +542,7 @@
     function isAnimating() {
       if (isRecording) return true;
       if (isPaused) return false;
+      if (renderStyle === 'flow') return false;
       let mode = patternSelect.value, sp = speedSlider.value();
       let animatedMode = (mode === 'waves' || mode === 'random') && sp > 0;
       let wobbleAnim = analogToggle.checked() && wobbleSlider.value() > 0 && sp > 0;
@@ -557,9 +558,8 @@
       if (transparentBg) clear(); else background(bgBrightnessSlider.value());
       if (img) {
         strokeCap(ROUND);
-        let base = radians(angleSlider.value());
-        drawField(base);
-        if (crosshatchToggle.checked()) drawField(base + HALF_PI);
+        const emit = (x1, y1, x2, y2, w, r, g, b) => pxDraw(MAIN, x1, y1, x2, y2, w, r, g, b);
+        renderArt(() => drawingContext, emit, {});
         applyPost();
       } else {
         push(); fill(90); noStroke(); textAlign(CENTER, CENTER); textSize(20);
@@ -1159,13 +1159,89 @@
     let pxPointer = { tx: 0, ty: 0, x: 0, y: 0 };
     let pxLayerImgs = [];
     let renderStyle = 'lines';
-    let dotSizeSlider, dotSoftSlider, depthSlider;
+    let dotSizeSlider, dotSoftSlider, depthSlider, flowLenSlider;
     const MAIN = { noStroke: () => noStroke(), fill: (...a) => fill(...a), circle: (...a) => circle(...a), stroke: (...a) => stroke(...a), strokeWeight: (...a) => strokeWeight(...a), line: (...a) => line(...a) };
     function pxDraw(g, x1, y1, x2, y2, w, r, gg, b) {
       if (renderStyle === 'dots') {
         let ds = dotSizeSlider ? dotSizeSlider.value() : 2.6, da = dotSoftSlider ? dotSoftSlider.value() : 150;
         g.noStroke(); g.fill(r, gg, b, da); g.circle(x1, y1, Math.max(1, w * ds));
+      } else if (renderStyle === 'flow') {
+        let da = dotSoftSlider ? dotSoftSlider.value() : 55;
+        g.stroke(r, gg, b, da); g.strokeWeight(w); g.line(x1, y1, x2, y2);
       } else { g.stroke(r, gg, b); g.strokeWeight(w); g.line(x1, y1, x2, y2); }
+    }
+    // dispatch: streamline flow vs the row-marched field
+    function genArt(emit, opts) {
+      let base = radians(angleSlider.value());
+      generateField(base, emit, opts);
+      if (crosshatchToggle.checked()) generateField(base + HALF_PI, emit, opts);
+    }
+    // Dispatch: flow draws streamlines straight to the canvas ctx (batched); else emit path.
+    function renderArt(ctxForLayer, emit, opts) {
+      if (renderStyle === 'flow') { flowInto(ctxForLayer, opts || {}); return; }
+      genArt(emit, opts);
+    }
+    // Flow (smoke): trace fine translucent streamlines along the image flow field.
+    // Each streamline is ONE canvas path + one stroke() -> fast even with thousands of them.
+    function flowInto(ctxForLayer, opts) {
+      if (!img) return;
+      if (!flowField) computeFlowField();
+      let spacing = Math.max(4, densitySlider.value());
+      let step = Math.max(1.5, resolutionSlider.value());
+      let steps = flowLenSlider ? flowLenSlider.value() : 70;
+      let sw = Math.max(0.35, (dotSizeSlider ? dotSizeSlider.value() : 2) * 0.35);
+      let alpha = (dotSoftSlider ? dotSoftSlider.value() : 55) / 255;
+      let curl = flowStrengthSlider.value();
+      let invert = invertToggle.checked(), respectAlpha = alphaToggle.checked();
+      let sampleColor = sampleColorToggle.checked(), useDuotone = duotoneToggle.checked();
+      let col1 = hexToRgb(colorPicker1.value()), col2 = hexToRgb(colorPicker2.value());
+      let contrastVal = contrastSlider.value();
+      let splitMode = (opts && opts.split) ? opts.split : 'depth';
+      let layerFilter = (opts && opts.layer != null) ? opts.layer : null;
+      let p = img.pixels, iw = img.width, nc = 0.006;
+      let cap = 200000, count = 0;
+      const lum = (i) => p[i] * 0.299 + p[i + 1] * 0.587 + p[i + 2] * 0.114;
+      let rowIdx = -1;
+      outer:
+      for (let sy = spacing / 2; sy < height; sy += spacing) {
+        rowIdx++;
+        for (let sx = spacing / 2; sx < width; sx += spacing) {
+          let x = sx + (noise(sx * 0.05, sy * 0.05, 1) - 0.5) * spacing;
+          let y = sy + (noise(sx * 0.05, sy * 0.05, 7) - 0.5) * spacing;
+          let ix = x | 0, iy = y | 0;
+          if (ix < 0 || ix >= width || iy < 0 || iy >= height) continue;
+          let idx = (iy * iw + ix) * 4;
+          if (respectAlpha && p[idx + 3] < 100) continue;
+          let b0 = lum(idx);
+          let nb0 = constrain((b0 / 255 - 0.5) * contrastVal + 0.5, 0, 1);
+          let content = invert ? nb0 : (1 - nb0);
+          if (content < 0.12) continue;
+          let lay = splitMode === 'interleave' ? (rowIdx % 3) : (b0 < 85 ? 0 : (b0 < 170 ? 1 : 2));
+          if (layerFilter !== null && lay !== layerFilter) continue;
+          let ctx = ctxForLayer(lay);
+          if (!ctx) continue;
+          let cr, cg, cbl;
+          if (sampleColor) { cr = p[idx]; cg = p[idx + 1]; cbl = p[idx + 2]; }
+          else if (useDuotone) { let l = nb0; if (invert) l = 1 - l; cr = lerp(col1.r, col2.r, l) | 0; cg = lerp(col1.g, col2.g, l) | 0; cbl = lerp(col1.b, col2.b, l) | 0; }
+          else { cr = col1.r; cg = col1.g; cbl = col1.b; }
+          ctx.beginPath(); ctx.moveTo(x, y);
+          let px = x, py = y, n = 0, curlAng = 0, doCurl = curl > 0.02;
+          for (let st = 0; st < steps; st++) {
+            let f = flowAt(px, py);
+            if (doCurl && (st & 3) === 0) curlAng = (noise(px * nc, py * nc, st * 0.02) - 0.5) * curl * 2.5;
+            let ang = f.a + curlAng;
+            px += Math.cos(ang) * step; py += Math.sin(ang) * step;
+            if (px < 0 || px >= width || py < 0 || py >= height) break;
+            ctx.lineTo(px, py); n++;
+          }
+          if (n > 1) {
+            ctx.strokeStyle = 'rgba(' + cr + ',' + cg + ',' + cbl + ',' + alpha.toFixed(3) + ')';
+            ctx.lineWidth = sw; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+            ctx.stroke();
+            count += n; if (count > cap) break outer;
+          }
+        }
+      }
     }
     function pxDepthStyles(D) {
       D = D || 0;
@@ -1200,7 +1276,7 @@
         '#stage.parallax #parallaxStage{display:block}' +
         '#stage.parallax #canvas-container{visibility:hidden}' +
         '.pxlayer{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;will-change:transform;pointer-events:none}' +
-        '#controls.parallax-mode .section:not([data-key="parallax"]):not([data-key="source"]):not([data-key="style"]){display:none}';
+        '#controls.parallax-mode .section:not([data-key="parallax"]):not([data-key="source"]):not([data-key="style"]):not([data-key="den"]):not([data-key="adjust"]){display:none}';
       const stEl = document.createElement('style'); stEl.textContent = css; document.head.appendChild(stEl);
 
       const stage = document.getElementById('stage');
@@ -1226,10 +1302,12 @@
       const styleSel = createSelect().parent(body);
       styleSel.option('Lines', 'lines');
       styleSel.option('Dots (stipple)', 'dots');
+      styleSel.option('Flow (smoke)', 'flow');
       styleSel.selected('lines');
       styleSel.changed(() => { renderStyle = styleSel.value(); if (pxMode) buildParallaxLayers(); else scheduleRender(); });
-      dotSizeSlider = addSlider(body, 'Dot size', 1, 8, 2.6, 0.1, 1, '', true, () => { if (pxMode) buildParallaxLayers(); });
-      dotSoftSlider = addSlider(body, 'Dot opacity', 20, 255, 150, 5, 0, '', true, () => { if (pxMode) buildParallaxLayers(); });
+      dotSizeSlider = addSlider(body, 'Size (dot / stroke)', 1, 8, 2.6, 0.1, 1, '', true, () => { if (pxMode) buildParallaxLayers(); });
+      dotSoftSlider = addSlider(body, 'Opacity', 20, 255, 150, 5, 0, '', true, () => { if (pxMode) buildParallaxLayers(); });
+      flowLenSlider = addSlider(body, 'Flow length (smoke)', 8, 200, 70, 1, 0, '', true, () => { if (pxMode) buildParallaxLayers(); });
       const splitSel = createSelect().parent(body);
       splitSel.option('Depth (by brightness)', 'depth');
       splitSel.option('Interleaved scan-lines', 'interleave');
@@ -1270,9 +1348,7 @@
     function pxRenderLayer(layerIndex) {
       let g = createGraphics(width, height); g.pixelDensity(1); g.clear(); g.strokeCap(ROUND);
       const emit = (x1, y1, x2, y2, w, r, gg, b) => pxDraw(g, x1, y1, x2, y2, w, r, gg, b);
-      let base = radians(angleSlider.value());
-      generateField(base, emit, { layer: layerIndex, split: pxSplit });
-      if (crosshatchToggle.checked()) generateField(base + HALF_PI, emit, { layer: layerIndex, split: pxSplit });
+      renderArt((lay) => lay === layerIndex ? g.drawingContext : null, emit, { layer: layerIndex, split: pxSplit });
       return g;
     }
 
@@ -1289,9 +1365,7 @@
       // single field pass, routed to the 3 layer buffers by depth/interleave (was 3 passes)
       let gs = [0, 1, 2].map(() => { let g = createGraphics(width, height); g.pixelDensity(1); g.clear(); g.strokeCap(ROUND); return g; });
       const emit = (x1, y1, x2, y2, w, r, gg, b, lay) => pxDraw(gs[lay], x1, y1, x2, y2, w, r, gg, b);
-      let base = radians(angleSlider.value());
-      generateField(base, emit, { split: pxSplit });
-      if (crosshatchToggle.checked()) generateField(base + HALF_PI, emit, { split: pxSplit });
+      renderArt((lay) => gs[lay].drawingContext, emit, { split: pxSplit });
       const styles = pxDepthStyles(depthSlider ? depthSlider.value() : 50);
       for (let i = 0; i < 3; i++) {
         let url = gs[i].drawingContext.canvas.toDataURL('image/png');
@@ -1399,8 +1473,7 @@
       // poster: full composite on transparent
       let gp = createGraphics(width, height); gp.pixelDensity(1); gp.clear(); gp.strokeCap(ROUND);
       const emit = (x1, y1, x2, y2, w, r, gg, b) => pxDraw(gp, x1, y1, x2, y2, w, r, gg, b);
-      let base = radians(angleSlider.value());
-      generateField(base, emit); if (crosshatchToggle.checked()) generateField(base + HALF_PI, emit);
+      renderArt(() => gp.drawingContext, emit, {});
       await add(prefix + '-hero.webp', gp.drawingContext.canvas);
       await add(prefix + '-hero-960.webp', gp.drawingContext.canvas, 960);
       gp.remove();

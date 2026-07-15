@@ -331,6 +331,7 @@
       setupKeyboard();
       refreshPresetDropdown();
 
+      initParallaxUI();
       loadDefaultImages();
     }
 
@@ -554,7 +555,9 @@
     }
 
     // One geometry generator, feeds both the canvas renderer and the SVG exporter.
-    function generateField(angle, emit) {
+    // opts.layer (0=far,1=middle,2=near) + opts.split ('depth'|'interleave') gate which
+    // segments are emitted, for the parallax depth-layer export.
+    function generateField(angle, emit, opts) {
       let lineSpacing = densitySlider.value();
       let maxWeight = maxThicknessSlider.value();
       let minWeight = minThicknessSlider.value();
@@ -585,8 +588,12 @@
       let cx = width / 2, cy = height / 2;
       let cosA = cos(angle), sinA = sin(angle);
       let maxRegion = sqrt(width * width + height * height) + 100;
+      let layerFilter = (opts && opts.layer != null) ? opts.layer : null;
+      let splitMode = (opts && opts.split) ? opts.split : 'depth';
+      let rowIndex = -1;
 
       for (let y = -maxRegion / 2; y < maxRegion / 2; y += lineSpacing) {
+        rowIndex++;
         let currentW = -1, currentDisplace = 0, flowY = 0;
 
         for (let x = -maxRegion / 2; x < maxRegion / 2; x += res) {
@@ -655,7 +662,12 @@
             let wy1 = cy + x * sinA + fy1 * cosA;
             let wx2 = cx + (x + res) * cosA - fy2 * sinA;
             let wy2 = cy + (x + res) * sinA + fy2 * cosA;
-            emit(wx1, wy1, wx2, wy2, currentW, cr, cg, cb);
+            if (layerFilter === null) {
+              emit(wx1, wy1, wx2, wy2, currentW, cr, cg, cb);
+            } else {
+              let lay = splitMode === 'interleave' ? (rowIndex % 3) : (b < 85 ? 0 : (b < 170 ? 1 : 2));
+              if (lay === layerFilter) emit(wx1, wy1, wx2, wy2, currentW, cr, cg, cb);
+            }
           } else {
             currentW = -1;
           }
@@ -1125,6 +1137,204 @@
       el.textContent = msg; el.classList.add('show');
       clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 2000);
     }
+
+    // ================= Parallax variant (Flat <-> Parallax) + layer export =================
+    let pxMode = false, pxSplit = 'depth', pxRAF = null, pxIdle = 0;
+    let pxPointer = { tx: 0, ty: 0, x: 0, y: 0 };
+    let pxLayerImgs = [];
+    const PX_DEPTHS = [
+      { name: 'far',    p: 6,  a: 3,  s: 0.60 },
+      { name: 'middle', p: 12, a: 6,  s: 0.85 },
+      { name: 'near',   p: 22, a: 11, s: 1.10 }
+    ];
+
+    function initParallaxUI() {
+      const css =
+        '.top-switch{position:absolute;top:14px;left:50%;transform:translateX(-50%);z-index:20;display:flex;gap:2px;background:#111114;border:1px solid var(--line);border-radius:20px;padding:3px}' +
+        '.top-switch button{background:transparent;border:none;color:var(--muted);font:inherit;font-size:.7rem;font-weight:700;letter-spacing:.09em;text-transform:uppercase;padding:6px 15px;border-radius:16px;cursor:pointer;transition:background .15s,color .15s}' +
+        '.top-switch button.active{background:var(--accent);color:#fff}' +
+        '#parallaxStage{position:absolute;inset:22px;display:none;overflow:hidden;border-radius:6px}' +
+        '#stage.parallax #parallaxStage{display:block}' +
+        '#stage.parallax #canvas-container{visibility:hidden}' +
+        '.pxlayer{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;will-change:transform;pointer-events:none}';
+      const stEl = document.createElement('style'); stEl.textContent = css; document.head.appendChild(stEl);
+
+      const stage = document.getElementById('stage');
+      const sw = document.createElement('div'); sw.className = 'top-switch';
+      const bFlat = document.createElement('button'); bFlat.textContent = 'Flat'; bFlat.className = 'active';
+      const bPar = document.createElement('button'); bPar.textContent = 'Parallax';
+      sw.appendChild(bFlat); sw.appendChild(bPar); stage.appendChild(sw);
+      const ov = document.createElement('div'); ov.id = 'parallaxStage'; stage.appendChild(ov);
+      bFlat.addEventListener('click', () => { setParallax(false); bFlat.classList.add('active'); bPar.classList.remove('active'); });
+      bPar.addEventListener('click', () => { setParallax(true); if (pxMode) { bPar.classList.add('active'); bFlat.classList.remove('active'); } });
+
+      stage.addEventListener('mousemove', (e) => {
+        const r = stage.getBoundingClientRect();
+        pxPointer.tx = ((e.clientX - r.left) / r.width - 0.5) * 2;
+        pxPointer.ty = ((e.clientY - r.top) / r.height - 0.5) * 2;
+      });
+      stage.addEventListener('mouseleave', () => { pxPointer.tx = 0; pxPointer.ty = 0; });
+
+      const sec = createDiv('').class('section').parent(select('#sliders'));
+      createDiv('Parallax &amp; Export <span class="chev">▾</span>').class('section-title').parent(sec);
+      const body = createDiv('').class('section-body').parent(sec);
+      const splitSel = createSelect().parent(body);
+      splitSel.option('Depth (by brightness)', 'depth');
+      splitSel.option('Interleaved scan-lines', 'interleave');
+      splitSel.selected('depth');
+      splitSel.changed(() => { pxSplit = splitSel.value(); if (pxMode) buildParallaxLayers(); });
+      createButton('Rebuild preview').class('btn').parent(body).mousePressed(() => { if (pxMode) buildParallaxLayers(); else toast('Switch to Parallax first'); });
+      const eRow = createDiv('').class('btn-row').parent(body);
+      createButton('Layers (.zip)').class('btn').parent(eRow).mousePressed(exportParallaxZip);
+      createButton('Parallax HTML').class('btn').parent(eRow).mousePressed(exportParallaxHTML);
+      sec.elt.querySelector('.section-title').addEventListener('click', () => sec.elt.classList.toggle('collapsed'));
+    }
+
+    function setParallax(on) {
+      if (on === pxMode) return;
+      const stage = document.getElementById('stage');
+      if (on) {
+        if (!img) { toast('Load an image first'); return; }
+        pxMode = true;
+        stage.classList.add('parallax');
+        noLoop();
+        buildParallaxLayers();
+        if (!pxRAF) pxRAF = requestAnimationFrame(pxTick);
+        toast('Parallax preview — move your mouse');
+      } else {
+        pxMode = false;
+        stage.classList.remove('parallax');
+        if (pxRAF) { cancelAnimationFrame(pxRAF); pxRAF = null; }
+        document.getElementById('parallaxStage').innerHTML = '';
+        pxLayerImgs = [];
+        scheduleRender();
+      }
+    }
+
+    function pxRenderLayer(layerIndex) {
+      let g = createGraphics(width, height); g.pixelDensity(1); g.clear(); g.strokeCap(ROUND);
+      const emit = (x1, y1, x2, y2, w, r, gg, b) => { g.stroke(r, gg, b); g.strokeWeight(w); g.line(x1, y1, x2, y2); };
+      let base = radians(angleSlider.value());
+      generateField(base, emit, { layer: layerIndex, split: pxSplit });
+      if (crosshatchToggle.checked()) generateField(base + HALF_PI, emit, { layer: layerIndex, split: pxSplit });
+      return g;
+    }
+
+    function buildParallaxLayers() {
+      const ov = document.getElementById('parallaxStage');
+      ov.innerHTML = ''; pxLayerImgs = [];
+      for (let i = 0; i < 3; i++) {
+        let g = pxRenderLayer(i);
+        let url = g.drawingContext.canvas.toDataURL('image/png');
+        g.remove();
+        let im = document.createElement('img'); im.className = 'pxlayer'; im.src = url;
+        ov.appendChild(im); pxLayerImgs.push(im);
+      }
+    }
+
+    function pxTick() {
+      pxRAF = requestAnimationFrame(pxTick);
+      pxPointer.x += (pxPointer.tx - pxPointer.x) * 0.06;
+      pxPointer.y += (pxPointer.ty - pxPointer.y) * 0.06;
+      pxIdle += 0.016;
+      for (let i = 0; i < pxLayerImgs.length; i++) {
+        const d = PX_DEPTHS[i];
+        const ix = Math.cos(pxIdle * d.s) * d.a;
+        const iy = Math.sin(pxIdle * d.s * 0.8) * d.a;
+        const px = pxPointer.x * d.p + ix;
+        const py = pxPointer.y * d.p + iy;
+        pxLayerImgs[i].style.transform = 'translate3d(' + px.toFixed(2) + 'px,' + py.toFixed(2) + 'px,0)';
+      }
+    }
+
+    // ---- self-contained parallax document (shared by HTML export + zip snippet) ----
+    function parallaxDoc(srcs, title) {
+      return '<!doctype html><html><head><meta charset="utf-8"><title>' + title + '</title>' +
+      '<style>html,body{margin:0;height:100%;background:#fff}.lc{position:relative;width:100%;max-width:1100px;margin:auto;aspect-ratio:' + width + '/' + height + ';overflow:hidden}.lc img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;will-change:transform}</style>' +
+      '</head><body><div class="lc" id="lc">' +
+      '<img data-depth="far" src="' + srcs.far + '" alt="">' +
+      '<img data-depth="middle" src="' + srcs.middle + '" alt="">' +
+      '<img data-depth="near" src="' + srcs.near + '" alt="">' +
+      '</div><script>(function(){var el=document.getElementById("lc"),ls=[].slice.call(el.querySelectorAll("img"));' +
+      'var cfg={far:{p:6,a:3,s:.6},middle:{p:12,a:6,s:.85},near:{p:22,a:11,s:1.1}};var tx=0,ty=0,cx=0,cy=0,t=0;' +
+      'el.addEventListener("mousemove",function(e){var r=el.getBoundingClientRect();tx=((e.clientX-r.left)/r.width-.5)*2;ty=((e.clientY-r.top)/r.height-.5)*2;});' +
+      'el.addEventListener("mouseleave",function(){tx=0;ty=0;});' +
+      'function tick(){requestAnimationFrame(tick);cx+=(tx-cx)*.06;cy+=(ty-cy)*.06;t+=.016;ls.forEach(function(im){var c=cfg[im.dataset.depth];var ix=Math.cos(t*c.s)*c.a,iy=Math.sin(t*c.s*.8)*c.a;im.style.transform="translate3d("+(cx*c.p+ix).toFixed(2)+"px,"+(cy*c.p+iy).toFixed(2)+"px,0)";});}tick();})();' +
+      '<\/script></body></html>';
+    }
+
+    function exportParallaxHTML() {
+      if (!img) return toast('Load an image first');
+      toast('Rendering layers…');
+      const s = {};
+      [[0, 'far'], [1, 'middle'], [2, 'near']].forEach(([i, nm]) => {
+        let g = pxRenderLayer(i); s[nm] = g.drawingContext.canvas.toDataURL('image/webp', 0.9); g.remove();
+      });
+      downloadBlob(new Blob([parallaxDoc(s, 'Conformation Parallax')], { type: 'text/html' }), 'conformation-parallax.html');
+      toast('Exported conformation-parallax.html');
+    }
+
+    // ---- minimal store-mode ZIP writer ----
+    const CRC_TABLE = (() => { let t = []; for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1); t[n] = c >>> 0; } return t; })();
+    function crc32(buf) { let c = 0xFFFFFFFF; for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+    function zipStore(files) {
+      const enc = new TextEncoder();
+      const u16 = n => [n & 255, (n >> 8) & 255];
+      const u32 = n => [n & 255, (n >> 8) & 255, (n >> 16) & 255, (n >> 24) & 255];
+      let parts = [], central = [], offset = 0;
+      for (const f of files) {
+        const name = enc.encode(f.name), data = f.data, crc = crc32(data);
+        const local = [].concat(u32(0x04034b50), u16(20), u16(0), u16(0), u16(0), u16(0), u32(crc), u32(data.length), u32(data.length), u16(name.length), u16(0));
+        parts.push(new Uint8Array(local), name, data);
+        central.push({ name, crc, size: data.length, offset });
+        offset += 30 + name.length + data.length;
+      }
+      let cdParts = [], cdSize = 0;
+      for (const c of central) {
+        const h = [].concat(u32(0x02014b50), u16(20), u16(20), u16(0), u16(0), u16(0), u16(0), u32(c.crc), u32(c.size), u32(c.size), u16(c.name.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(c.offset));
+        cdParts.push(new Uint8Array(h), c.name); cdSize += h.length + c.name.length;
+      }
+      const end = new Uint8Array([].concat(u32(0x06054b50), u16(0), u16(0), u16(central.length), u16(central.length), u32(cdSize), u32(offset), u16(0)));
+      const all = parts.concat(cdParts, [end]);
+      let total = all.reduce((s, a) => s + a.length, 0), out = new Uint8Array(total), pp = 0;
+      for (const a of all) { out.set(a, pp); pp += a.length; }
+      return out;
+    }
+
+    async function exportParallaxZip() {
+      if (!img) return toast('Load an image first');
+      toast('Rendering layers…');
+      const prefix = 'conformation', files = [];
+      const add = async (name, srcCanvas, w) => {
+        let target = srcCanvas, tmp = null;
+        if (w && w < width) {
+          let sc = createGraphics(w, Math.round(height * w / width)); sc.pixelDensity(1); sc.clear();
+          sc.drawingContext.drawImage(srcCanvas, 0, 0, sc.width, sc.height);
+          target = sc.drawingContext.canvas; tmp = sc;
+        }
+        const blob = await new Promise(res => target.toBlob(res, 'image/webp', 0.9));
+        if (tmp) tmp.remove();
+        files.push({ name, data: new Uint8Array(await blob.arrayBuffer()) });
+      };
+      for (const [i, nm] of [[0, 'far'], [1, 'middle'], [2, 'near']]) {
+        let g = pxRenderLayer(i);
+        await add(prefix + '-' + nm + '.webp', g.drawingContext.canvas);
+        await add(prefix + '-' + nm + '-960.webp', g.drawingContext.canvas, 960);
+        g.remove();
+      }
+      // poster: full composite on transparent
+      let gp = createGraphics(width, height); gp.pixelDensity(1); gp.clear(); gp.strokeCap(ROUND);
+      const emit = (x1, y1, x2, y2, w, r, gg, b) => { gp.stroke(r, gg, b); gp.strokeWeight(w); gp.line(x1, y1, x2, y2); };
+      let base = radians(angleSlider.value());
+      generateField(base, emit); if (crosshatchToggle.checked()) generateField(base + HALF_PI, emit);
+      await add(prefix + '-hero.webp', gp.drawingContext.canvas);
+      await add(prefix + '-hero-960.webp', gp.drawingContext.canvas, 960);
+      gp.remove();
+      files.push({ name: 'snippet.html', data: new TextEncoder().encode(parallaxDoc({ far: prefix + '-far.webp', middle: prefix + '-middle.webp', near: prefix + '-near.webp' }, 'Conformation Parallax')) });
+      downloadBlob(new Blob([zipStore(files)], { type: 'application/zip' }), prefix + '-parallax-layers.zip');
+      toast('Exported ' + files.length + ' files (.zip)');
+    }
+
   </script>
 </body>
 </html>

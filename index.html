@@ -273,7 +273,7 @@
     let colorPicker1, colorPicker2, duotoneToggle, sampleColorToggle, invertToggle, alphaToggle, contrastSlider;
     let flowToggle, flowStrengthSlider;
     let bloomSlider, bloomRadiusSlider, grainSlider;
-    let preBrightSlider, preGammaSlider, preBlurSlider;
+    let preBrightSlider, preGammaSlider, preBlurSlider, autoLevelsToggle;
 
     let settingsInput, presetSelect;
 
@@ -483,6 +483,22 @@
         let p = img.pixels;
         for (let i = 0; i < p.length; i += 4) { p[i] = lut[p[i]]; p[i + 1] = lut[p[i + 1]]; p[i + 2] = lut[p[i + 2]]; }
         img.updatePixels(); img.loadPixels();
+      }
+
+      // auto-levels: stretch the luminance range (clip 0.5% each end) so low-contrast
+      // renders use the full range and the subject stays legible.
+      if (autoLevelsToggle && autoLevelsToggle.checked()) {
+        let p = img.pixels, hist = new Uint32Array(256), total = p.length / 4;
+        for (let i = 0; i < p.length; i += 4) hist[(p[i] * 0.299 + p[i + 1] * 0.587 + p[i + 2] * 0.114) | 0]++;
+        let clip = total * 0.005, lo = 0, hi = 255, acc = 0;
+        for (let i = 0; i < 256; i++) { acc += hist[i]; if (acc > clip) { lo = i; break; } }
+        acc = 0; for (let i = 255; i >= 0; i--) { acc += hist[i]; if (acc > clip) { hi = i; break; } }
+        if (hi - lo > 4) {
+          let lut = new Uint8Array(256);
+          for (let i = 0; i < 256; i++) lut[i] = constrain(Math.round((i - lo) * 255 / (hi - lo)), 0, 255);
+          for (let i = 0; i < p.length; i += 4) { p[i] = lut[p[i]]; p[i + 1] = lut[p[i + 1]]; p[i + 2] = lut[p[i + 2]]; }
+          img.updatePixels(); img.loadPixels();
+        }
       }
 
       computeFlowField();
@@ -1025,14 +1041,14 @@
       s.style('background', `linear-gradient(90deg, var(--accent) ${pct}%, var(--line) ${pct}%)`);
     }
     function fmt(v, d) { return Number(v).toFixed(d); }
-    function addToggle(parent, labelText, val) {
+    function addToggle(parent, labelText, val, extra) {
       let row = createDiv('').class('control-row').parent(parent);
       createSpan(labelText).class('slabel').parent(row);
       let c = createCheckbox('', val).parent(row);
       c.addClass('switch');
       createDiv('').class('track').parent(c);
       const sync = () => c.elt.classList.toggle('on', c.checked());
-      c._sync = sync; c.changed(() => { sync(); scheduleRender(); }); sync();
+      c._sync = sync; c.changed(() => { sync(); if (extra) extra(); scheduleRender(); }); sync();
       c._def = val; allToggles.push(c); return c;
     }
 
@@ -1044,6 +1060,7 @@
       preBrightSlider = addSlider(adj, 'Brightness', 0.2, 2.0, 1, 0.05, 2, '', true, rebuild);
       preGammaSlider = addSlider(adj, 'Gamma', 0.3, 3.0, 1, 0.05, 2, '', true, rebuild);
       preBlurSlider = addSlider(adj, 'Blur', 0, 8, 0, 0.5, 1, 'px', true, rebuild);
+      autoLevelsToggle = addToggle(adj, 'Auto-levels (keep subject legible)', false, () => { updateCanvasAndImage(); if (pxMode) buildParallaxLayers(); });
 
       // GEOMETRY
       let geo = addSection('Geometry & Movement', 'geo');

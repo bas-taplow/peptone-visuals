@@ -387,6 +387,7 @@
           addRecent(loadedImg, false);
           updateCanvasAndImage();
           scheduleRender();
+          if (pxMode) buildParallaxLayers();
           toast('Image loaded · ' + loadedImg.width + '×' + loadedImg.height);
         }, () => toast('Could not decode that image.'));
       };
@@ -442,6 +443,7 @@
           originalImg = it.img;
           document.getElementById('plateEyebrow').textContent = it.isDefault ? 'Illustrative' : 'Source';
           updateCanvasAndImage(); scheduleRender(); buildRecentStrip();
+          if (pxMode) buildParallaxLayers();
         });
         strip.appendChild(d);
       });
@@ -530,7 +532,7 @@
       let grainAnim = grainSlider.value() > 0 && sp > 0;
       return animatedMode || wobbleAnim || grainAnim;
     }
-    function scheduleRender() { if (isAnimating()) loop(); else { noLoop(); redraw(); } }
+    function scheduleRender() { if (pxMode) { noLoop(); return; } if (isAnimating()) loop(); else { noLoop(); redraw(); } }
     function mouseMoved() { if (img && !isPaused && mousePushSlider.value() > 0 && !isLooping()) redraw(); }
 
     function togglePlay() { isPaused = !isPaused; playButton.html(isPaused ? 'Play' : 'Pause'); scheduleRender(); }
@@ -550,7 +552,7 @@
     }
 
     function drawField(angle) {
-      const emit = (x1, y1, x2, y2, w, r, g, b) => { stroke(r, g, b); strokeWeight(w); line(x1, y1, x2, y2); };
+      const emit = (x1, y1, x2, y2, w, r, g, b) => pxDraw(MAIN, x1, y1, x2, y2, w, r, g, b);
       generateField(angle, emit);
     }
 
@@ -662,12 +664,8 @@
             let wy1 = cy + x * sinA + fy1 * cosA;
             let wx2 = cx + (x + res) * cosA - fy2 * sinA;
             let wy2 = cy + (x + res) * sinA + fy2 * cosA;
-            if (layerFilter === null) {
-              emit(wx1, wy1, wx2, wy2, currentW, cr, cg, cb);
-            } else {
-              let lay = splitMode === 'interleave' ? (rowIndex % 3) : (b < 85 ? 0 : (b < 170 ? 1 : 2));
-              if (lay === layerFilter) emit(wx1, wy1, wx2, wy2, currentW, cr, cg, cb);
-            }
+            let lay = splitMode === 'interleave' ? (rowIndex % 3) : (b < 85 ? 0 : (b < 170 ? 1 : 2));
+            if (layerFilter === null || lay === layerFilter) emit(wx1, wy1, wx2, wy2, currentW, cr, cg, cb, lay);
           } else {
             currentW = -1;
           }
@@ -1143,6 +1141,32 @@
     let pxMode = false, pxSplit = 'depth', pxRAF = null, pxIdle = 0;
     let pxPointer = { tx: 0, ty: 0, x: 0, y: 0 };
     let pxLayerImgs = [];
+    let renderStyle = 'lines';
+    let dotSizeSlider, dotSoftSlider, depthSlider;
+    const MAIN = { noStroke: () => noStroke(), fill: (...a) => fill(...a), circle: (...a) => circle(...a), stroke: (...a) => stroke(...a), strokeWeight: (...a) => strokeWeight(...a), line: (...a) => line(...a) };
+    function pxDraw(g, x1, y1, x2, y2, w, r, gg, b) {
+      if (renderStyle === 'dots') {
+        let ds = dotSizeSlider ? dotSizeSlider.value() : 2.6, da = dotSoftSlider ? dotSoftSlider.value() : 150;
+        g.noStroke(); g.fill(r, gg, b, da); g.circle(x1, y1, Math.max(1, w * ds));
+      } else { g.stroke(r, gg, b); g.strokeWeight(w); g.line(x1, y1, x2, y2); }
+    }
+    function pxDepthStyles(D) {
+      D = D || 0;
+      return [
+        { blur: D * 0.09, op: 1 - 0.40 * (D / 100) },
+        { blur: D * 0.04, op: 1 - 0.15 * (D / 100) },
+        { blur: 0, op: 1 }
+      ];
+    }
+    function bakeLayer(g, blur, op) {
+      let c = createGraphics(width, height); c.pixelDensity(1); c.clear();
+      let ctx = c.drawingContext;
+      ctx.globalAlpha = (op == null ? 1 : op);
+      if (blur > 0.1) ctx.filter = 'blur(' + blur.toFixed(2) + 'px)';
+      ctx.drawImage(g.drawingContext.canvas, 0, 0);
+      ctx.filter = 'none'; ctx.globalAlpha = 1;
+      return c;
+    }
     const PX_DEPTHS = [
       { name: 'far',    p: 6,  a: 3,  s: 0.60 },
       { name: 'middle', p: 12, a: 6,  s: 0.85 },
@@ -1180,11 +1204,19 @@
       const sec = createDiv('').class('section').parent(select('#sliders'));
       createDiv('Parallax &amp; Export <span class="chev">▾</span>').class('section-title').parent(sec);
       const body = createDiv('').class('section-body').parent(sec);
+      const styleSel = createSelect().parent(body);
+      styleSel.option('Lines', 'lines');
+      styleSel.option('Dots (stipple)', 'dots');
+      styleSel.selected('lines');
+      styleSel.changed(() => { renderStyle = styleSel.value(); if (pxMode) buildParallaxLayers(); else scheduleRender(); });
+      dotSizeSlider = addSlider(body, 'Dot size', 1, 8, 2.6, 0.1, 1, '', true, () => { if (pxMode) buildParallaxLayers(); });
+      dotSoftSlider = addSlider(body, 'Dot opacity', 20, 255, 150, 5, 0, '', true, () => { if (pxMode) buildParallaxLayers(); });
       const splitSel = createSelect().parent(body);
       splitSel.option('Depth (by brightness)', 'depth');
       splitSel.option('Interleaved scan-lines', 'interleave');
       splitSel.selected('depth');
       splitSel.changed(() => { pxSplit = splitSel.value(); if (pxMode) buildParallaxLayers(); });
+      depthSlider = addSlider(body, 'Parallax depth (soft far / sharp near)', 0, 100, 50, 1, 0, '', true, () => { if (pxMode) buildParallaxLayers(); });
       createButton('Rebuild preview').class('btn').parent(body).mousePressed(() => { if (pxMode) buildParallaxLayers(); else toast('Switch to Parallax first'); });
       const eRow = createDiv('').class('btn-row').parent(body);
       createButton('Layers (.zip)').class('btn').parent(eRow).mousePressed(exportParallaxZip);
@@ -1215,7 +1247,7 @@
 
     function pxRenderLayer(layerIndex) {
       let g = createGraphics(width, height); g.pixelDensity(1); g.clear(); g.strokeCap(ROUND);
-      const emit = (x1, y1, x2, y2, w, r, gg, b) => { g.stroke(r, gg, b); g.strokeWeight(w); g.line(x1, y1, x2, y2); };
+      const emit = (x1, y1, x2, y2, w, r, gg, b) => pxDraw(g, x1, y1, x2, y2, w, r, gg, b);
       let base = radians(angleSlider.value());
       generateField(base, emit, { layer: layerIndex, split: pxSplit });
       if (crosshatchToggle.checked()) generateField(base + HALF_PI, emit, { layer: layerIndex, split: pxSplit });
@@ -1232,11 +1264,19 @@
       const ov = document.getElementById('parallaxStage');
       pxApplyBg();
       ov.innerHTML = ''; pxLayerImgs = [];
+      // single field pass, routed to the 3 layer buffers by depth/interleave (was 3 passes)
+      let gs = [0, 1, 2].map(() => { let g = createGraphics(width, height); g.pixelDensity(1); g.clear(); g.strokeCap(ROUND); return g; });
+      const emit = (x1, y1, x2, y2, w, r, gg, b, lay) => pxDraw(gs[lay], x1, y1, x2, y2, w, r, gg, b);
+      let base = radians(angleSlider.value());
+      generateField(base, emit, { split: pxSplit });
+      if (crosshatchToggle.checked()) generateField(base + HALF_PI, emit, { split: pxSplit });
+      const styles = pxDepthStyles(depthSlider ? depthSlider.value() : 50);
       for (let i = 0; i < 3; i++) {
-        let g = pxRenderLayer(i);
-        let url = g.drawingContext.canvas.toDataURL('image/png');
-        g.remove();
+        let url = gs[i].drawingContext.canvas.toDataURL('image/png');
+        gs[i].remove();
         let im = document.createElement('img'); im.className = 'pxlayer'; im.src = url;
+        im.style.filter = styles[i].blur > 0.1 ? ('blur(' + styles[i].blur.toFixed(2) + 'px)') : 'none';
+        im.style.opacity = styles[i].op.toFixed(3);
         ov.appendChild(im); pxLayerImgs.push(im);
       }
     }
@@ -1276,8 +1316,10 @@
       if (!img) return toast('Load an image first');
       toast('Rendering layers…');
       const s = {};
+      const styles = pxDepthStyles(depthSlider ? depthSlider.value() : 50);
       [[0, 'far'], [1, 'middle'], [2, 'near']].forEach(([i, nm]) => {
-        let g = pxRenderLayer(i); s[nm] = g.drawingContext.canvas.toDataURL('image/webp', 0.9); g.remove();
+        let g = pxRenderLayer(i); let baked = bakeLayer(g, styles[i].blur, styles[i].op);
+        s[nm] = baked.drawingContext.canvas.toDataURL('image/webp', 0.9); g.remove(); baked.remove();
       });
       downloadBlob(new Blob([parallaxDoc(s, 'Conformation Parallax')], { type: 'text/html' }), 'conformation-parallax.html');
       toast('Exported conformation-parallax.html');
@@ -1325,15 +1367,16 @@
         if (tmp) tmp.remove();
         files.push({ name, data: new Uint8Array(await blob.arrayBuffer()) });
       };
+      const styles = pxDepthStyles(depthSlider ? depthSlider.value() : 50);
       for (const [i, nm] of [[0, 'far'], [1, 'middle'], [2, 'near']]) {
-        let g = pxRenderLayer(i);
-        await add(prefix + '-' + nm + '.webp', g.drawingContext.canvas);
-        await add(prefix + '-' + nm + '-960.webp', g.drawingContext.canvas, 960);
-        g.remove();
+        let g = pxRenderLayer(i); let baked = bakeLayer(g, styles[i].blur, styles[i].op);
+        await add(prefix + '-' + nm + '.webp', baked.drawingContext.canvas);
+        await add(prefix + '-' + nm + '-960.webp', baked.drawingContext.canvas, 960);
+        g.remove(); baked.remove();
       }
       // poster: full composite on transparent
       let gp = createGraphics(width, height); gp.pixelDensity(1); gp.clear(); gp.strokeCap(ROUND);
-      const emit = (x1, y1, x2, y2, w, r, gg, b) => { gp.stroke(r, gg, b); gp.strokeWeight(w); gp.line(x1, y1, x2, y2); };
+      const emit = (x1, y1, x2, y2, w, r, gg, b) => pxDraw(gp, x1, y1, x2, y2, w, r, gg, b);
       let base = radians(angleSlider.value());
       generateField(base, emit); if (crosshatchToggle.checked()) generateField(base + HALF_PI, emit);
       await add(prefix + '-hero.webp', gp.drawingContext.canvas);
